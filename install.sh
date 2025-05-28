@@ -32,7 +32,7 @@ apt install -y ca-certificates gnupg2 lsb-release software-properties-common ngi
 # 🛠 Подготовка Supabase
 mkdir -p /opt/supabase && cd /opt/supabase
 git clone https://github.com/supabase/supabase.git --depth=1
-cp -r supabase/studio docker
+cp -r supabase/docker .
 
 # 🔐 Настраиваем basic auth
 htpasswd -cb /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
