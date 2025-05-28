@@ -16,9 +16,6 @@ SUPABASE_DB_PASSWORD=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 32)
 ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
-S3_ACCESS_KEY=$(openssl rand -hex 16)
-S3_SECRET_KEY=$(openssl rand -hex 32)
-S3_REGION=local
 
 SITE_URL=https://$DOMAIN
 
@@ -35,6 +32,11 @@ apt install -y ca-certificates gnupg2 lsb-release software-properties-common ngi
 mkdir -p /opt/supabase && cd /opt/supabase
 git clone https://github.com/supabase/supabase.git --depth=1
 cp -r supabase/docker .
+cp docker/docker-compose.yml .
+
+# 🔧 Фикс vector container и docker.sock пути
+sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|g' docker/docker-compose.yml
+sed -i 's|/etc/vector/vector.yml:/etc/vector|/etc/vector/vector.yml:/etc/vector/vector.yml|g' docker/docker-compose.yml || true
 
 # 🔐 Настраиваем basic auth
 htpasswd -cb /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
@@ -50,15 +52,7 @@ DASHBOARD_USERNAME=$DASHBOARD_USERNAME
 DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
 SITE_URL=$SITE_URL
 DOMAIN=$DOMAIN
-S3_ACCESS_KEY=$S3_ACCESS_KEY
-S3_SECRET_KEY=$S3_SECRET_KEY
-S3_REGION=$S3_REGION
 EOF
-
-# 🛠 Фикс docker.sock, если нужен
-sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|g' docker/docker-compose.yml
-
-cp docker/docker-compose.yml .
 
 # 🌐 Настройка nginx
 cat <<EOF > /etc/nginx/sites-available/supabase
@@ -84,7 +78,7 @@ certbot --nginx -d "$DOMAIN"
 
 # 🚀 Запуск Supabase
 cd /opt/supabase
-docker compose --env-file .env up -d
+docker compose --env-file .env -f docker/docker-compose.yml up -d
 
 # 📋 Финальный вывод
 clear
@@ -98,9 +92,6 @@ echo "anon key:           $ANON_KEY"
 echo "service_role key:   $SERVICE_ROLE_KEY"
 echo "Studio login:       $DASHBOARD_USERNAME"
 echo "Studio password:    $DASHBOARD_PASSWORD"
-echo "S3 Access Key:      $S3_ACCESS_KEY"
-echo "S3 Secret Key:      $S3_SECRET_KEY"
-echo "S3 Region:          $S3_REGION"
 echo "Домен:              $DOMAIN"
 echo "----------------------------------------"
 echo -e "\n💡 Эти данные понадобятся тебе для настройки n8n и других сервисов."
