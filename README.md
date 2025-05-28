@@ -55,6 +55,7 @@ bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-instal
 * Supabase self-hosted
 * Nginx + SSL (Let's Encrypt)
 * Basic auth (логин/пароль для доступа к Supabase Studio)
+* Запросит домен и подставит его в nginx
 * Полезные утилиты: `git`, `jq`, `htop`, `net-tools`, `ufw`
 
 ---
