@@ -1,4 +1,4 @@
-\#!/usr/bin/env bash
+\#!/bin/bash
 
 set -e
 
@@ -8,11 +8,9 @@ echo "🔹 Введите домен (например: supabase.example.com):"
 read DOMAIN
 
 echo "🔹 Введите логин для Supabase Studio:"
-echo -n "Логин: "
-read DASHBOARD\_USERNAME
+read -p "Логин: " DASHBOARD\_USERNAME
+read -s -p "Пароль: " DASHBOARD\_PASSWORD
 
-echo -n "Пароль: "
-read -s DASHBOARD\_PASSWORD
 echo
 
 # 🛠 Генерация паролей и ключей
