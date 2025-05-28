@@ -16,6 +16,9 @@ SUPABASE_DB_PASSWORD=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 32)
 ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
+S3_ACCESS_KEY=$(openssl rand -hex 16)
+S3_SECRET_KEY=$(openssl rand -hex 32)
+S3_REGION=local
 
 SITE_URL=https://$DOMAIN
 
@@ -47,6 +50,9 @@ DASHBOARD_USERNAME=$DASHBOARD_USERNAME
 DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
 SITE_URL=$SITE_URL
 DOMAIN=$DOMAIN
+S3_ACCESS_KEY=$S3_ACCESS_KEY
+S3_SECRET_KEY=$S3_SECRET_KEY
+S3_REGION=$S3_REGION
 EOF
 
 # 🛠 Фикс docker.sock, если нужен
@@ -92,6 +98,9 @@ echo "anon key:           $ANON_KEY"
 echo "service_role key:   $SERVICE_ROLE_KEY"
 echo "Studio login:       $DASHBOARD_USERNAME"
 echo "Studio password:    $DASHBOARD_PASSWORD"
+echo "S3 Access Key:      $S3_ACCESS_KEY"
+echo "S3 Secret Key:      $S3_SECRET_KEY"
+echo "S3 Region:          $S3_REGION"
 echo "Домен:              $DOMAIN"
 echo "----------------------------------------"
 echo -e "\n💡 Эти данные понадобятся тебе для настройки n8n и других сервисов."
