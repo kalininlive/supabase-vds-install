@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 
 set -e
 
@@ -16,8 +16,7 @@ SUPABASE_DB_PASSWORD=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 32)
 ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
-
-SITE_URL=https://$DOMAIN
+SITE_URL="https://$DOMAIN"
 
 # 📦 Установка Docker и Docker Compose
 apt update && apt upgrade -y
@@ -32,11 +31,6 @@ apt install -y ca-certificates gnupg2 lsb-release software-properties-common ngi
 mkdir -p /opt/supabase && cd /opt/supabase
 git clone https://github.com/supabase/supabase.git --depth=1
 cp -r supabase/docker .
-cp docker/docker-compose.yml .
-
-# 🔧 Фикс vector container и docker.sock пути
-sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|g' docker/docker-compose.yml
-sed -i 's|/etc/vector/vector.yml:/etc/vector|/etc/vector/vector.yml:/etc/vector/vector.yml|g' docker/docker-compose.yml || true
 
 # 🔐 Настраиваем basic auth
 htpasswd -cb /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
@@ -53,6 +47,11 @@ DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
 SITE_URL=$SITE_URL
 DOMAIN=$DOMAIN
 EOF
+
+# 🛠 Фикс docker.sock
+sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|g' docker/docker-compose.yml
+
+cp docker/docker-compose.yml .
 
 # 🌐 Настройка nginx
 cat <<EOF > /etc/nginx/sites-available/supabase
@@ -78,7 +77,7 @@ certbot --nginx -d "$DOMAIN"
 
 # 🚀 Запуск Supabase
 cd /opt/supabase
-docker compose --env-file .env -f docker/docker-compose.yml up -d
+docker compose --env-file .env up -d
 
 # 📋 Финальный вывод
 clear
