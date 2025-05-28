@@ -8,8 +8,12 @@ echo "🔹 Введите домен (например: supabase.example.com):"
 read DOMAIN
 
 echo "🔹 Введите логин для Supabase Studio:"
-read -p "Логин: " DASHBOARD\_USERNAME
-read -s -p "Пароль: " DASHBOARD\_PASSWORD
+echo -n "Логин: "
+read DASHBOARD\_USERNAME
+
+echo -n "Пароль: "
+read -s DASHBOARD\_PASSWORD
+echo
 
 # 🛠 Генерация паролей и ключей
 
