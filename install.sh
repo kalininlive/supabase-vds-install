@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-echo "🔹 Введите домен (например: supabase.example.com):"
-read DOMAIN
+# Проверка прав root
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Запускать нужно с правами root или через sudo"
+  exit 1
+fi
+
+echo "🔹 Введите доменное имя для Supabase (например: supabase.example.com):"
+read -r DOMAIN
 
 echo "🔹 Введите логин для Supabase Studio:"
-read -p "Логин: " DASHBOARD_USERNAME
-read -s -p "Пароль: " DASHBOARD_PASSWORD
-echo -e "\n🔐 Генерация секретов..."
+read -r DASHBOARD_USERNAME
 
+echo "🔹 Введите пароль для Supabase Studio (будет скрыт):"
+read -rs DASHBOARD_PASSWORD
+echo ""
+
+echo "🔐 Генерация секретных ключей..."
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 SUPABASE_DB_PASSWORD=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 32)
@@ -17,35 +26,49 @@ ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
 SITE_URL="https://$DOMAIN"
 
-# Установка зависимостей
-apt update && apt install -y \
-    curl git ca-certificates gnupg \
-    docker.io nginx certbot python3-certbot-nginx apache2-utils
-
-# Установка Docker Compose V2
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-  > /etc/apt/sources.list.d/docker.list
-
+echo "Обновляем пакеты и устанавливаем зависимости..."
 apt update
-apt install -y docker-compose-plugin docker-buildx-plugin
+apt install -y curl git ca-certificates gnupg lsb-release nginx certbot python3-certbot-nginx apache2-utils
 
-# Настройка Docker
-systemctl enable docker --now
+echo "Устанавливаем Docker и Docker Compose..."
+if ! command -v docker >/dev/null 2>&1; then
+  curl -fsSL https://get.docker.com -o get-docker.sh
+  sh get-docker.sh
+  rm get-docker.sh
+fi
 
-# Загрузка Supabase
-mkdir -p /opt/supabase && cd /opt/supabase
-git clone https://github.com/supabase/supabase.git --depth=1
-cp -r supabase/docker ./ && cp docker/docker-compose.yml ./
+if ! dpkg -s docker-compose-plugin >/dev/null 2>&1; then
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+    $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  apt update
+  apt install -y docker-compose-plugin
+fi
 
-# Фикс docker.sock
-sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|' docker/docker-compose.yml
+systemctl enable --now docker
 
-# Создание .env
-cat <<EOF > .env
+echo "Клонируем репозиторий Supabase..."
+mkdir -p /opt/supabase
+cd /opt/supabase
+
+if [ ! -d supabase ]; then
+  git clone https://github.com/supabase/supabase.git --depth=1
+else
+  echo "Репозиторий supabase уже существует, обновляем..."
+  cd supabase && git pull
+  cd ..
+fi
+
+cp -r supabase/docker ./docker
+cp docker/docker-compose.yml ./
+
+echo "Фиксим путь к docker.sock в docker-compose.yml..."
+sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|' docker-compose.yml || true
+
+echo "Создаем .env с параметрами..."
+cat > .env <<EOF
 SUPABASE_DB_PASSWORD=$SUPABASE_DB_PASSWORD
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 JWT_SECRET=$JWT_SECRET
@@ -60,10 +83,10 @@ POSTGRES_PORT=5432
 POSTGRES_HOST=db
 EOF
 
-# NGINX + Basic Auth
+echo "Настраиваем Nginx с basic auth..."
 htpasswd -cb /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
 
-cat <<EOF > /etc/nginx/sites-available/supabase
+cat > /etc/nginx/sites-available/supabase <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
@@ -79,18 +102,36 @@ server {
 EOF
 
 ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
-nginx -t && systemctl reload nginx
 
-# SSL-сертификат
-certbot --nginx -d "$DOMAIN" || echo "⚠️ Не удалось получить сертификат (лимит Let's Encrypt?)"
+echo "Проверяем конфигурацию nginx..."
+nginx -t
 
-# Запуск контейнеров Supabase
-cd /opt/supabase
-docker compose --env-file .env -f docker/docker-compose.yml up -d
+echo "Перезапускаем nginx..."
+systemctl reload nginx
 
-# Финальный вывод
+echo "Получаем SSL сертификат Let's Encrypt..."
+if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN"; then
+  echo "⚠️ Не удалось получить SSL сертификат. Проверьте домен и настройки DNS."
+fi
+
+echo "Запускаем контейнеры Supabase..."
+docker compose --env-file .env -f docker-compose.yml up -d
+
+echo "Ждем 10 секунд, чтобы контейнеры поднялись..."
+sleep 10
+
+echo "Получаем S3 Access Key и Secret Key из контейнера MinIO..."
+STORAGE_CONTAINER=$(docker ps --filter "name=storage" --format "{{.Names}}" | head -n1)
+
+if [ -z "$STORAGE_CONTAINER" ]; then
+  echo "⚠️ Не удалось найти контейнер Storage (MinIO)."
+else
+  S3_ACCESS_KEY=$(docker exec "$STORAGE_CONTAINER" printenv MINIO_ACCESS_KEY || echo "не найден")
+  S3_SECRET_KEY=$(docker exec "$STORAGE_CONTAINER" printenv MINIO_SECRET_KEY || echo "не найден")
+fi
+
 clear
-echo -e "\n✅ Установка завершена. Ниже важные данные:"
+echo -e "\n✅ Установка Supabase завершена!\n"
 echo "----------------------------------------"
 echo "Studio URL:         $SITE_URL"
 echo "API URL:            $SITE_URL"
@@ -101,4 +142,7 @@ echo "service_role key:   $SERVICE_ROLE_KEY"
 echo "Studio login:       $DASHBOARD_USERNAME"
 echo "Studio password:    $DASHBOARD_PASSWORD"
 echo "Домен:              $DOMAIN"
+echo "S3 Access Key:      $S3_ACCESS_KEY"
+echo "S3 Secret Key:      $S3_SECRET_KEY"
+echo "S3 Region:          local"
 echo "----------------------------------------"
