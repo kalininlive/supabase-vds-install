@@ -9,7 +9,6 @@ read DOMAIN
 echo "🔹 Введите логин для Supabase Studio:"
 read -p "Логин: " DASHBOARD_USERNAME
 read -s -p "Пароль: " DASHBOARD_PASSWORD
-
 echo -e "\n🔐 Генерируем секреты..."
 
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -50,6 +49,9 @@ SITE_URL=$SITE_URL
 DOMAIN=$DOMAIN
 EOF
 
+# 🛠 Фикс docker.sock, если нужен
+sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|g' docker/docker-compose.yml
+
 cp docker/docker-compose.yml .
 
 # 🌐 Настройка nginx
@@ -76,7 +78,7 @@ certbot --nginx -d "$DOMAIN"
 
 # 🚀 Запуск Supabase
 cd /opt/supabase
-docker compose -f docker/docker-compose.yml up -d
+docker compose --env-file .env up -d
 
 # 📋 Финальный вывод
 clear
