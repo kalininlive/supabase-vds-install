@@ -1,50 +1,59 @@
-\#!/bin/bash
+\#!/usr/bin/env bash
 
 set -e
 
-# 🔹 Запрос данных пользователя
+# 🔹 Ввод переменных пользователем
 
-echo "🔹 Введите домен, на котором будет доступен Supabase (например: supabase.example.com):"
+echo "🔹 Введите домен (например: supabase.example.com):"
 read DOMAIN
 
-echo "🔹 Введите логин для доступа к Supabase Studio:"
-read -p "Логин: " ADMIN\_LOGIN
-read -s -p "Пароль: " ADMIN\_PASS
-echo
+echo "🔹 Введите логин для Supabase Studio:"
+read -p "Логин: " DASHBOARD\_USERNAME
+read -s -p "Пароль: " DASHBOARD\_PASSWORD
 
-# 🔧 Обновление зеркал и системы
+# 🛠 Генерация паролей и ключей
+
+POSTGRES\_PASSWORD=\$(openssl rand -hex 16)
+SUPABASE\_DB\_PASSWORD=\$(openssl rand -hex 16)
+JWT\_SECRET=\$(openssl rand -hex 32)
+ANON\_KEY=\$(openssl rand -hex 32)
+SERVICE\_ROLE\_KEY=\$(openssl rand -hex 32)
+
+SITE\_URL="https\://\$DOMAIN"
+
+# 📦 Установка Docker и Docker Compose
 
 apt update && apt upgrade -y
+apt install -y curl git
+curl -fsSL [https://get.docker.com](https://get.docker.com) -o get-docker.sh && sh get-docker.sh
+apt install -y docker-compose-plugin
 
-# 🔧 Установка базовых утилит
+# 🔧 Установка утилит
 
-apt install -y curl ca-certificates gnupg2 lsb-release software-properties-common
+apt install -y ca-certificates gnupg2 lsb-release software-properties-common nginx certbot python3-certbot-nginx apache2-utils
 
-# 🐳 Установка Docker и docker-compose
-
-apt install -y docker.io docker-compose-plugin
-systemctl enable docker
-systemctl start docker
-
-# 🌐 Установка Nginx, SSL и htpasswd
-
-apt install -y nginx certbot python3-certbot-nginx apache2-utils
-
-# 🛠 Подготовка структуры
+# 🛠 Подготовка Supabase
 
 mkdir -p /opt/supabase && cd /opt/supabase
-
-echo "🔐 Настраиваем Basic Auth..."
-htpasswd -cb /etc/nginx/.htpasswd "\$ADMIN\_LOGIN" "\$ADMIN\_PASS"
-
-echo "📦 Скачиваем Supabase..."
 git clone [https://github.com/supabase/supabase.git](https://github.com/supabase/supabase.git) --depth=1
 cp -r supabase/docker .
 
-# ⚙️ Настройка .env
+# 🔐 Настраиваем basic auth
+
+htpasswd -cb /etc/nginx/.htpasswd "\$DASHBOARD\_USERNAME" "\$DASHBOARD\_PASSWORD"
+
+# 📝 Сохраняем переменные в .env
 
 cat <<EOF > .env
-SUPABASE\_DB\_PASSWORD=\$(openssl rand -hex 16)
+SUPABASE\_DB\_PASSWORD=\$SUPABASE\_DB\_PASSWORD
+POSTGRES\_PASSWORD=\$POSTGRES\_PASSWORD
+JWT\_SECRET=\$JWT\_SECRET
+ANON\_KEY=\$ANON\_KEY
+SERVICE\_ROLE\_KEY=\$SERVICE\_ROLE\_KEY
+DASHBOARD\_USERNAME=\$DASHBOARD\_USERNAME
+DASHBOARD\_PASSWORD=\$DASHBOARD\_PASSWORD
+SITE\_URL=\$SITE\_URL
+DOMAIN=\$DOMAIN
 EOF
 
 cp docker/docker-compose.yml .
@@ -70,17 +79,30 @@ location / {
 EOF
 
 ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
-
-# 🔍 Проверка и перезапуск Nginx
-
 nginx -t && systemctl reload nginx
 
-# 🔒 Получение сертификата
+# 🔒 SSL-сертификат
 
 certbot --nginx -d "\$DOMAIN"
 
 # 🚀 Запуск Supabase
 
-docker compose up -d
+cd /opt/supabase
+docker compose -f docker/docker-compose.yml up -d
 
-echo "✅ Готово! Supabase доступен по адресу: https\://\$DOMAIN"
+# 📋 Финальный вывод
+
+clear
+echo "\n✅ Установка завершена. Ниже важные данные:"
+echo "----------------------------------------"
+echo "Studio URL:         \$SITE\_URL"
+echo "API URL:            \$SITE\_URL"
+echo "DB:                 postgres\://postgres:\$POSTGRES\_PASSWORD\@localhost:5432/postgres"
+echo "JWT\_SECRET:         \$JWT\_SECRET"
+echo "anon key:           \$ANON\_KEY"
+echo "service\_role key:   \$SERVICE\_ROLE\_KEY"
+echo "Studio login:       \$DASHBOARD\_USERNAME"
+echo "Studio password:    \$DASHBOARD\_PASSWORD"
+echo "Домен:              \$DOMAIN"
+echo "----------------------------------------"
+echo "\n💡 Эти данные понадобятся тебе для настройки n8n и других сервисов."
