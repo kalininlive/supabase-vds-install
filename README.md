@@ -73,28 +73,60 @@ bash <(curl -s https://raw.githubusercontent.com/websansay/supabase-vds-install/
 
 ## Как безопасно обновлять Supabase
 
-### Шаги обновления:
+Создай файл `update.sh`:
 
 ```bash
+#!/bin/bash
 cd /opt/supabase
-sudo docker compose down
-sudo docker compose pull
-sudo docker compose up -d
+
+echo "Создаём бэкап перед обновлением..."
+docker exec supabase-db pg_dump -U postgres -d postgres > backup_$(date +%F_%H-%M).sql
+
+echo "Останавливаем Supabase..."
+docker compose down
+
+echo "Обновляем образы..."
+docker compose pull
+
+echo "Запускаем Supabase..."
+docker compose up -d
+
+echo "✅ Обновление завершено"
 ```
 
-**Важно:** эти действия сохраняют все данные. Нельзя использовать `docker volume rm` или `docker system prune -a` без понимания последствий!
+Запуск:
+
+```bash
+bash update.sh
+```
 
 ---
 
-## Как сделать резервную копию Supabase
+## Как сделать резервную копию Supabase вручную
+
+Создай файл `backup.sh`:
 
 ```bash
+#!/bin/bash
 cd /opt/supabase
-sudo docker exec supabase-db pg_dump -U postgres -d postgres > backup.sql
+
+echo "Создание бэкапа..."
+docker exec supabase-db pg_dump -U postgres -d postgres > backup_$(date +%F_%H-%M).sql
+
+echo "✅ Бэкап сохранён"
 ```
 
-* Бэкап создаёт дамп базы данных в файл `backup.sql`
-* Рекомендуется настроить `cron` на ежедневный бэкап и загрузку в облако или отправку в Telegram (будет добавлено в будущем)
+Запуск:
+
+```bash
+bash backup.sh
+```
+
+Можно настроить `cron`, чтобы делать бэкап каждый день в 2:00:
+
+```bash
+0 2 * * * /bin/bash /opt/supabase/backup.sh
+```
 
 ---
 
