@@ -18,18 +18,30 @@ SERVICE_ROLE_KEY=$(openssl rand -hex 32)
 SITE_URL="https://$DOMAIN"
 
 # Установка зависимостей
-apt update && apt install -y curl git docker.io docker-compose nginx certbot python3-certbot-nginx apache2-utils
+apt update && apt install -y \
+    curl git ca-certificates gnupg \
+    docker.io nginx certbot python3-certbot-nginx apache2-utils
+
+# Установка Docker Compose V2
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  > /etc/apt/sources.list.d/docker.list
+
+apt update
+apt install -y docker-compose-plugin docker-buildx-plugin
 
 # Настройка Docker
 systemctl enable docker --now
 
-# Загрузка и подготовка Supabase
+# Загрузка Supabase
 mkdir -p /opt/supabase && cd /opt/supabase
 git clone https://github.com/supabase/supabase.git --depth=1
-cp -r supabase/docker ./
-cp docker/docker-compose.yml ./
+cp -r supabase/docker ./ && cp docker/docker-compose.yml ./
 
-# Фикс монтирования docker.sock
+# Фикс docker.sock
 sed -i 's|:/var/run/docker.sock:ro,z|/var/run/docker.sock:/var/run/docker.sock:ro,z|' docker/docker-compose.yml
 
 # Создание .env
@@ -72,7 +84,7 @@ nginx -t && systemctl reload nginx
 # SSL-сертификат
 certbot --nginx -d "$DOMAIN" || echo "⚠️ Не удалось получить сертификат (лимит Let's Encrypt?)"
 
-# Запуск контейнеров
+# Запуск контейнеров Supabase
 cd /opt/supabase
 docker compose --env-file .env -f docker/docker-compose.yml up -d
 
