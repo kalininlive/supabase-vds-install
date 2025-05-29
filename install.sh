@@ -24,14 +24,16 @@ SITE_URL="https://$DOMAIN"
 log "INFO" "Установка зависимостей..."
 apt update -y && apt install -y \
   curl git ca-certificates gnupg lsb-release \
-  docker.io nginx certbot python3-certbot-nginx apache2-utils
+  docker.io nginx certbot python3-certbot-nginx apache2-utils unzip
 
-log "INFO" "Установка Supabase CLI..."
-CLI_URL="https://github.com/supabase/cli/releases/latest/download/supabase_Linux_x86_64.tar.gz"
-curl -sL "$CLI_URL" | tar xz -C /usr/local/bin supabase
+log "INFO" "Установка Supabase CLI версии 2.23.4..."
+curl -L -o /tmp/supabase_linux_amd64.tar.gz https://github.com/supabase/cli/releases/download/v2.23.4/supabase_linux_amd64.tar.gz
+tar -xzf /tmp/supabase_linux_amd64.tar.gz -C /tmp
+mv /tmp/supabase /usr/local/bin/supabase
 chmod +x /usr/local/bin/supabase
+rm -f /tmp/supabase_linux_amd64.tar.gz
 
-log "INFO" "Запускаем Supabase (supabase start)..."
+log "INFO" "Запуск Supabase (supabase start)..."
 mkdir -p /opt/supabase
 cd /opt/supabase
 supabase start
