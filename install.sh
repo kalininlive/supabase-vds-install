@@ -79,12 +79,26 @@ VAULT_ENC_KEY=$(openssl rand -hex 64)
 
 SITE_URL="https://$DOMAIN"
 
-log INFO "Принудительно включаем IPv4 для apt..."
+log INFO "Добавляем официальный репозиторий Docker и ключи..."
+
+apt-get remove -y docker docker-engine docker.io containerd runc || true
+
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg lsb-release
+
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
 echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
 
-log INFO "Обновляем систему и устанавливаем зависимости..."
-DEBIAN_FRONTEND=noninteractive apt update -y
-DEBIAN_FRONTEND=noninteractive apt install -y curl git ca-certificates gnupg lsb-release docker.io docker-compose-plugin nginx certbot python3-certbot-nginx apache2-utils
+apt-get update -y
+
+log INFO "Устанавливаем docker-ce, docker-ce-cli, containerd и docker-compose-plugin..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 log INFO "Включаем и запускаем Docker..."
 systemctl enable docker --now
