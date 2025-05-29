@@ -79,16 +79,16 @@ check_container_health() {
 rotate_logs
 
 if [ "$EUID" -ne 0 ]; then
-  log ERROR "Run this script as root or with sudo"
+  log ERROR "Run script as root or with sudo"
   exit 1
 fi
 
-log INFO "Starting Supabase installation/update..."
+log INFO "Starting Supabase installation..."
 
 read -rp "Enter domain (e.g. supabase.example.com): " DOMAIN
 read -rp "Enter email for SSL cert and notifications: " EMAIL
 read -rp "Enter Supabase Studio username: " DASHBOARD_USERNAME
-read -rsp "Enter Supabase Studio password (hidden): " DASHBOARD_PASSWORD
+read -rsp "Enter password for Supabase Studio and nginx Basic Auth (hidden): " DASHBOARD_PASSWORD
 echo ""
 
 log INFO "Generating secret keys..."
@@ -99,14 +99,56 @@ ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
 SECRET_KEY_BASE=$(openssl rand -hex 64)
 VAULT_ENC_KEY=$(openssl rand -hex 64)
+
+SMTP_USER="supabase_smtp_user"
+SMTP_PASS=$(openssl rand -base64 20)
+
 SITE_URL="https://$DOMAIN"
 
-log INFO "Updating system and installing dependencies..."
+log INFO "Installing dependencies..."
 apt update -y >> "$LOG_FILE" 2>&1
-apt install -y curl git ca-certificates gnupg lsb-release nginx certbot python3-certbot-nginx apache2-utils mailutils >> "$LOG_FILE" 2>&1
+apt install -y curl git ca-certificates gnupg lsb-release nginx certbot python3-certbot-nginx apache2-utils mailutils postfix sasl2-bin libsasl2-modules >> "$LOG_FILE" 2>&1
 log SUCCESS "Dependencies installed"
 
-log INFO "Installing Docker and Docker Compose..."
+log INFO "Configuring Postfix for SMTP auth with generated user..."
+
+systemctl enable saslauthd
+systemctl start saslauthd
+
+cat > /etc/postfix/sasl_passwd <<EOF
+[localhost]:587 $SMTP_USER:$SMTP_PASS
+EOF
+
+postmap /etc/postfix/sasl_passwd
+
+[ ! -f /etc/postfix/main.cf.bak ] && cp /etc/postfix/main.cf /etc/postfix/main.cf.bak
+
+postconf -e "relayhost = [localhost]:587"
+postconf -e "smtp_sasl_auth_enable = yes"
+postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd"
+postconf -e "smtp_sasl_security_options = noanonymous"
+postconf -e "smtp_use_tls = yes"
+postconf -e "smtp_tls_security_level = encrypt"
+postconf -e "smtp_tls_note_starttls_offer = yes"
+postconf -e "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt"
+postconf -e "smtp_sasl_type = cyrus"
+postconf -e "smtp_sasl_path = smtpd"
+
+mkdir -p /etc/sasl2
+cat > /etc/sasl2/smtp.conf <<EOF
+pwcheck_method: auxprop
+auxprop_plugin: sasldb
+mech_list: plain login
+EOF
+
+echo "$SMTP_PASS" | saslpasswd2 -c -u "$DOMAIN" "$SMTP_USER" -p
+
+systemctl restart saslauthd
+systemctl restart postfix
+
+log SUCCESS "Postfix configured with SMTP auth user $SMTP_USER"
+
+log INFO "Installing Docker..."
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com -o get-docker.sh >> "$LOG_FILE" 2>&1
   sh get-docker.sh >> "$LOG_FILE" 2>&1
@@ -117,6 +159,7 @@ else
 fi
 systemctl enable --now docker >> "$LOG_FILE" 2>&1
 
+log INFO "Installing Docker Compose plugin..."
 if ! dpkg -s docker-compose-plugin >/dev/null 2>&1; then
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg >> "$LOG_FILE" 2>&1
@@ -128,7 +171,7 @@ else
   log INFO "Docker Compose plugin already installed"
 fi
 
-log INFO "Cloning/updating Supabase repo..."
+log INFO "Cloning or updating Supabase repo..."
 mkdir -p /opt/supabase
 cd /opt/supabase
 if [ -d supabase ]; then
@@ -167,11 +210,14 @@ STUDIO_DEFAULT_ORGANIZATION=default_org
 STUDIO_DEFAULT_PROJECT=default_project
 JWT_EXPIRY=3600
 CERTBOT_EMAIL=$EMAIL
+SMTP_USER=$SMTP_USER
+SMTP_PASS=$SMTP_PASS
 EOF
-log SUCCESS ".env created"
+log SUCCESS ".env created with secrets"
 
-log INFO "Setting up Nginx and basic auth..."
+log INFO "Setting up nginx and basic auth..."
 htpasswd -cb /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD" >> "$LOG_FILE" 2>&1
+
 cat > /etc/nginx/sites-available/supabase <<EOF
 server {
     listen 80;
@@ -187,15 +233,16 @@ server {
 }
 EOF
 ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
+
 nginx -t >> "$LOG_FILE" 2>&1
 systemctl reload nginx >> "$LOG_FILE" 2>&1
 log SUCCESS "Nginx configured and reloaded"
 
-log INFO "Requesting SSL certificate via Certbot..."
+log INFO "Requesting SSL certificate with certbot..."
 if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" >> "$LOG_FILE" 2>&1; then
   log SUCCESS "SSL certificate obtained"
 else
-  log WARN "SSL certificate issue — check domain and email"
+  log WARN "SSL certificate issue, check domain/email"
 fi
 
 log INFO "Starting Supabase containers..."
@@ -208,13 +255,14 @@ for container in $(docker compose ps -q); do
   has_healthcheck=$(docker inspect --format='{{json .State.Health}}' "$container" 2>/dev/null || echo "null")
   if [ "$has_healthcheck" != "null" ]; then
     if ! check_container_health "$name"; then
-      log ERROR "Container $name is unhealthy, installation may be broken"
+      log ERROR "Container $name unhealthy"
       exit 1
     fi
   else
-    log INFO "Container $name has no healthcheck, skipping"
+    log INFO "Container $name no healthcheck, skipping"
   fi
 done
+
 log INFO "All containers healthy"
 
 STORAGE_CONTAINER=$(docker ps --filter "name=storage" --format "{{.Names}}" | head -n1)
@@ -237,8 +285,8 @@ JWT_SECRET:         $JWT_SECRET
 anon key:           $ANON_KEY
 service_role key:   $SERVICE_ROLE_KEY
 
-Studio login:       $DASHBOARD_USERNAME
-Studio password:    $DASHBOARD_PASSWORD
+Studio username:    $DASHBOARD_USERNAME
+Studio/nginx password: $DASHBOARD_PASSWORD
 
 Domain:             $DOMAIN
 
@@ -248,13 +296,16 @@ S3 Region:          local
 
 SSL Email:          $EMAIL
 
-Installation logs available at: $LOG_FILE
+SMTP user:          $SMTP_USER
+SMTP password:      $SMTP_PASS
+
+Logs file:          $LOG_FILE
 EOF
 )
 
 send_email_report "Supabase Installation Report for $DOMAIN" "$EMAIL_BODY" "$EMAIL"
 
-log SUCCESS "Installation notification sent to $EMAIL"
+log SUCCESS "Installation email sent to $EMAIL"
 
 echo -e "\n----------------------------------------"
 echo "$EMAIL_BODY"
