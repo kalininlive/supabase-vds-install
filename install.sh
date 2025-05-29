@@ -79,31 +79,23 @@ VAULT_ENC_KEY=$(openssl rand -hex 64)
 
 SITE_URL="https://$DOMAIN"
 
-log INFO "Добавляем официальный репозиторий Docker и ключи..."
+log INFO "Устанавливаем Docker и Docker Compose через официальный скрипт get.docker.com..."
 
-apt-get remove -y docker docker-engine docker.io containerd runc || true
+curl -fsSL https://get.docker.com | bash
 
+log INFO "Добавляем пользователя в группу docker для запуска без sudo..."
+usermod -aG docker "$SUDO_USER"
+
+log INFO "Проверяем установку Docker и Docker Compose..."
+docker --version
+docker compose version || true
+
+log INFO "Устанавливаем дополнительные пакеты..."
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg lsb-release
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  nginx certbot python3-certbot-nginx apache2-utils git curl ca-certificates gnupg lsb-release
 
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
-
-apt-get update -y
-
-log INFO "Устанавливаем docker-ce, docker-ce-cli, containerd и docker-compose-plugin..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-log INFO "Включаем и запускаем Docker..."
-systemctl enable docker --now
-
-log INFO "Клонируем репозиторий Supabase (или обновляем)..."
+log INFO "Клонируем репозиторий Supabase..."
 mkdir -p /opt/supabase
 cd /opt/supabase
 if [ -d supabase ]; then
