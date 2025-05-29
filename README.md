@@ -51,20 +51,19 @@ curl -o install.sh https://raw.githubusercontent.com/kalininlive/supabase-vds-in
 
 Скрипт установит:
 
-* Docker, docker-compose
-* Supabase self-hosted
-* Nginx + SSL (Let's Encrypt)
-* Basic auth (логин/пароль для доступа к Supabase Studio)
+* Docker и docker-compose
+* Supabase self-hosted (через Supabase CLI и `supabase start`)
+* Nginx с SSL (Let's Encrypt) и Basic Auth (логин/пароль для доступа к Supabase Studio)
 * Запросит домен и подставит его в nginx
-* Полезные утилиты: `git`, `jq`, `htop`, `net-tools`, `ufw`
+* Полезные утилиты: `git`, `jq`, `htop`, `net-tools`, `ufw`, `unzip`
 
 ---
 
 ## ✅ Что входит в установку
 
-* 📦 Supabase + PostgreSQL + Studio
-* 🔒 Basic Auth (защита по логину/паролю)
-* 🌐 HTTPS с автоматическим сертификатом
+* 📦 Supabase (PostgreSQL, API, Studio, Auth, Storage и прочие сервисы)
+* 🔒 Basic Auth (защита по логину/паролю для Supabase Studio)
+* 🌐 HTTPS с автоматическим сертификатом от Let's Encrypt (если лимиты позволяют)
 * 📂 Хранение данных в `/opt/supabase`
 
 ---
@@ -80,7 +79,7 @@ bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-instal
 ### Что делает `update.sh`:
 
 * Создаёт резервную копию перед обновлением
-* Перезапускает Supabase с новыми образами
+* Перезапускает Supabase с новыми Docker образами
 
 ---
 
@@ -94,7 +93,7 @@ bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-instal
 
 Можно добавить автоматический бэкап в `cron`:
 
-```bash
+```cron
 0 2 * * * /bin/bash /opt/supabase/backup.sh
 ```
 
@@ -127,3 +126,7 @@ bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-instal
 
 🎯 **Всё готово!**
 Supabase установлен и доступен на твоём домене, полностью локально, с защитой и удобством дальнейшего администрирования.
+
+---
+
+Если нужно — помогу с FAQ или дополнениями к README.
