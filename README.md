@@ -63,7 +63,7 @@ curl -o install.sh https://raw.githubusercontent.com/kalininlive/supabase-vds-in
 
 * 📦 Supabase (PostgreSQL, API, Studio, Auth, Storage и прочие сервисы)
 * 🔒 Basic Auth (защита по логину/паролю для Supabase Studio)
-* 🌐 HTTPS с автоматическим сертификатом от Let's Encrypt (если лимиты позволяют)
+* 🌐 HTTPS с автоматическим сертификатом от Let's Encrypt
 * 📂 Хранение данных в `/opt/supabase`
 
 ---
