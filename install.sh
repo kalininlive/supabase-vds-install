@@ -37,12 +37,28 @@ log() {
   echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
 }
 
+disable_ipv6() {
+  log INFO "Отключаем IPv6 на время установки..."
+  sysctl -w net.ipv6.conf.all.disable_ipv6=1
+  sysctl -w net.ipv6.conf.default.disable_ipv6=1
+  sysctl -w net.ipv6.conf.lo.disable_ipv6=1
+}
+
+enable_ipv6() {
+  log INFO "Включаем IPv6 обратно после установки..."
+  sysctl -w net.ipv6.conf.all.disable_ipv6=0
+  sysctl -w net.ipv6.conf.default.disable_ipv6=0
+  sysctl -w net.ipv6.conf.lo.disable_ipv6=0
+}
+
 rotate_logs
 
 if [ "$EUID" -ne 0 ]; then
   log ERROR "Запустите скрипт с правами root или через sudo"
   exit 1
 fi
+
+disable_ipv6
 
 log INFO "Начинаем установку Supabase..."
 
@@ -52,17 +68,28 @@ read -rp "Введите логин для Supabase Studio: " DASHBOARD_USERNAME
 read -rsp "Введите пароль для Supabase Studio и nginx Basic Auth (скрыто): " DASHBOARD_PASSWORD
 echo ""
 
+log INFO "Генерируем секретные ключи..."
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+SUPABASE_DB_PASSWORD=$(openssl rand -hex 16)
+JWT_SECRET=$(openssl rand -hex 32)
+ANON_KEY=$(openssl rand -hex 32)
+SERVICE_ROLE_KEY=$(openssl rand -hex 32)
+SECRET_KEY_BASE=$(openssl rand -hex 64)
+VAULT_ENC_KEY=$(openssl rand -hex 64)
+
+SITE_URL="https://$DOMAIN"
+
+log INFO "Принудительно включаем IPv4 для apt..."
+echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
+
 log INFO "Обновляем систему и устанавливаем зависимости..."
 DEBIAN_FRONTEND=noninteractive apt update -y
-DEBIAN_FRONTEND=noninteractive apt install -y \
-  curl git ca-certificates gnupg lsb-release \
-  docker.io docker-compose-plugin \
-  nginx certbot python3-certbot-nginx apache2-utils
+DEBIAN_FRONTEND=noninteractive apt install -y curl git ca-certificates gnupg lsb-release docker.io docker-compose-plugin nginx certbot python3-certbot-nginx apache2-utils
 
 log INFO "Включаем и запускаем Docker..."
 systemctl enable docker --now
 
-log INFO "Клонируем репозиторий Supabase (или обновляем, если есть)..."
+log INFO "Клонируем репозиторий Supabase (или обновляем)..."
 mkdir -p /opt/supabase
 cd /opt/supabase
 if [ -d supabase ]; then
@@ -80,18 +107,7 @@ log INFO "Копируем Docker конфигурации..."
 cp -r supabase/docker ./docker
 cp docker/docker-compose.yml ./
 
-log INFO "Генерируем ключи и создаём .env..."
-
-POSTGRES_PASSWORD=$(openssl rand -hex 16)
-SUPABASE_DB_PASSWORD=$(openssl rand -hex 16)
-JWT_SECRET=$(openssl rand -hex 32)
-ANON_KEY=$(openssl rand -hex 32)
-SERVICE_ROLE_KEY=$(openssl rand -hex 32)
-SECRET_KEY_BASE=$(openssl rand -hex 64)
-VAULT_ENC_KEY=$(openssl rand -hex 64)
-
-SITE_URL="https://$DOMAIN"
-
+log INFO "Создаём .env с ключами и настройками..."
 cat > .env <<EOF
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 SUPABASE_DB_PASSWORD=$SUPABASE_DB_PASSWORD
@@ -109,7 +125,7 @@ POSTGRES_PORT=5432
 POSTGRES_HOST=db
 EOF
 
-log INFO "Настраиваем nginx и basic auth..."
+log INFO "Настраиваем nginx и Basic Auth..."
 htpasswd -cb /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
 
 cat > /etc/nginx/sites-available/supabase <<EOF
@@ -131,27 +147,29 @@ ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
 nginx -t && systemctl reload nginx
 
 log INFO "Получаем SSL сертификат через certbot..."
-certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL" || log WARN "Не удалось получить сертификат (проверьте домен/почту)"
+if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL"; then
+  log SUCCESS "SSL сертификат успешно получен"
+else
+  log WARN "Не удалось получить SSL сертификат (проверьте домен и email)"
+fi
 
 log INFO "Запускаем контейнеры Supabase..."
 docker compose --env-file .env -f docker-compose.yml up -d
 
 log INFO "Проверяем статус контейнеров..."
-
 for container in $(docker compose ps -q); do
   name=$(docker inspect --format='{{.Name}}' "$container" | cut -c2-)
-  has_healthcheck=$(docker inspect --format='{{json .State.Health}}' "$container" 2>/dev/null || echo "null")
-  if [ "$has_healthcheck" != "null" ]; then
-    status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null)
-    if [ "$status" != "healthy" ]; then
-      log WARN "Контейнер $name не здоров: $status"
+  health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "no healthcheck")
+  if [ "$health" != "no healthcheck" ]; then
+    if [ "$health" != "healthy" ]; then
+      log WARN "Контейнер $name не здоров: $health"
     else
       log INFO "Контейнер $name здоров"
     fi
+  else
+    log INFO "Контейнер $name без healthcheck, пропускаем проверку"
   fi
 done
-
-# Получаем S3 Access и Secret из контейнера Storage
 
 STORAGE_CONTAINER=$(docker ps --filter "name=storage" --format "{{.Names}}" | head -n1)
 if [ -z "$STORAGE_CONTAINER" ]; then
@@ -162,11 +180,13 @@ else
   S3_SECRET_KEY=$(docker exec "$STORAGE_CONTAINER" printenv MINIO_SECRET_KEY || echo "не найден")
 fi
 
+enable_ipv6
+
 cat <<EOF
 
-🚀 Установка завершена!
+🚀 Установка Supabase завершена!
 
-🔑 Важные данные:
+Доступы и важные данные:
 
 Studio URL:         $SITE_URL
 API URL:            $SITE_URL
@@ -183,7 +203,5 @@ Studio/nginx pass:  $DASHBOARD_PASSWORD
 
 S3 Access Key:      $S3_ACCESS_KEY
 S3 Secret Key:      $S3_SECRET_KEY
-
----
 
 EOF
