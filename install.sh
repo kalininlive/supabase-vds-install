@@ -27,7 +27,8 @@ apt update -y && apt install -y \
   docker.io nginx certbot python3-certbot-nginx apache2-utils
 
 log "INFO" "Установка Supabase CLI..."
-curl -sL https://github.com/supabase/cli/releases/latest/download/supabase_$(uname -s)_$(uname -m).tar.gz | tar xz -C /usr/local/bin supabase
+CLI_URL="https://github.com/supabase/cli/releases/latest/download/supabase_Linux_x86_64.tar.gz"
+curl -sL "$CLI_URL" | tar xz -C /usr/local/bin supabase
 chmod +x /usr/local/bin/supabase
 
 log "INFO" "Запускаем Supabase (supabase start)..."
