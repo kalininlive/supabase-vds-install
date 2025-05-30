@@ -46,7 +46,7 @@
 Введи в терминале одну команду:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kalininlive/supabase-vds-install/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
+bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-install/main/install.sh)
 ```
 
 Скрипт установит:
