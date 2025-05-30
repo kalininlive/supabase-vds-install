@@ -6,15 +6,20 @@ log() {
   echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"
 }
 
-log "INFO" "🚀 Запуск установки Supabase..."
+# Проверка и установка Docker при необходимости
+if ! command -v docker &> /dev/null; then
+  log "INFO" "Установка Docker..."
+  apt-get update && \
+  apt-get install -y ca-certificates curl gnupg lsb-release && \
+  install -m 0755 -d /etc/apt/keyrings && \
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
+  echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+  apt-get update && \
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
 
-read -p "Введите домен (например: supabase.example.com): " DOMAIN
-read -p "Введите email для SSL сертификата: " EMAIL
-read -p "Введите логин для Supabase Studio: " DASHBOARD_USERNAME
-read -s -p "Введите пароль для Supabase Studio (и для Basic Auth в Kong): " DASHBOARD_PASSWORD
-echo ""
-read -p "Введите Telegram Bot Token: " TG_BOT_TOKEN
-read -p "Введите Telegram User ID для уведомлений: " TG_USER_ID
+log "INFO" "🛡️ Проверка docker-compose..."
+docker compose version
 
 log "INFO" "🔐 Генерация переменных..."
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -22,47 +27,52 @@ JWT_SECRET=$(openssl rand -hex 32)
 ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
 SITE_URL="https://$DOMAIN"
+SECRET_KEY_BASE=$(openssl rand -hex 32)
 
 log "INFO" "📁 Подготовка директорий..."
-rm -rf /opt/supabase /opt/supabase-project
-mkdir -p /opt/supabase-project
+mkdir -p /opt/supabase /opt/supabase-project
 cd /opt
 
 log "INFO" "⬇️ Клонирование репозитория Supabase..."
-git clone https://github.com/supabase/supabase.git
-cd /opt/supabase
-git checkout master
+if [ ! -d "supabase" ]; then
+  git clone --filter=blob:none --no-checkout https://github.com/supabase/supabase
+  cd supabase
+  git sparse-checkout init --cone
+  git sparse-checkout set docker
+  git checkout master
+  cd ..
+fi
 
-log "INFO" "📂 Копирование docker-файлов..."
-cp -rf docker/* /opt/supabase-project/
+log "INFO" "📂 Копирование docker файлов..."
+cp -rf supabase/docker/* supabase-project/
+cp supabase/docker/.env.example supabase-project/.env
 
 log "INFO" "✍️ Запись .env..."
-cat <<EOF > /opt/supabase-project/.env
-# --- Основные ключи ---
+cat > /opt/supabase-project/.env <<EOF
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 JWT_SECRET=$JWT_SECRET
 ANON_KEY=$ANON_KEY
 SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY
+SECRET_KEY_BASE=$SECRET_KEY_BASE
 SITE_URL=$SITE_URL
-
-# --- Supabase Studio ---
-DASHBOARD_USERNAME=$DASHBOARD_USERNAME
-DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
-
-# --- SMTP (оставляем пустыми, настраивается вручную) ---
+SMTP_ADMIN_EMAIL=
 SMTP_HOST=
 SMTP_PORT=
 SMTP_USER=
 SMTP_PASS=
-SMTP_ADMIN_EMAIL=
 SMTP_SENDER_NAME=
-
-# --- Logflare (опционально, оставим пустым) ---
-LOGFLARE_API_KEY=
-
-# --- Telegram уведомления ---
-TG_BOT_TOKEN=$TG_BOT_TOKEN
-TG_USER_ID=$TG_USER_ID
+MAILER_URLPATHS_INVITE=
+MAILER_URLPATHS_CONFIRMATION=
+MAILER_URLPATHS_RECOVERY=
+MAILER_URLPATHS_EMAIL_CHANGE=
+API_EXTERNAL_URL=
+ENABLE_EMAIL_SIGNUP=true
+ENABLE_EMAIL_AUTOCONFIRM=false
+ENABLE_PHONE_SIGNUP=false
+ENABLE_PHONE_AUTOCONFIRM=false
+ENABLE_ANONYMOUS_USERS=false
+DISABLE_SIGNUP=false
+JWT_EXPIRY=3600
 EOF
 
 log "INFO" "📦 Загрузка docker-образов..."
@@ -72,16 +82,6 @@ docker compose pull
 log "INFO" "🚀 Запуск Supabase..."
 docker compose up -d
 
-sleep 5
-STATUS=$(docker compose ps | grep -E 'Up|running' | wc -l)
+log "INFO" "✅ Установка завершена. Supabase доступен по адресу: $SITE_URL"
 
-MESSAGE="✅ Supabase установлен на домене: $DOMAIN
-📦 Контейнеров запущено: $STATUS
-🛡️ Панель Studio: https://$DOMAIN
-🔐 Логин: $DASHBOARD_USERNAME"
-
-curl -s -X POST https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage \
-  -d chat_id=$TG_USER_ID \
-  -d text="$(echo "$MESSAGE")"
-
-log "INFO" "✅ Установка завершена!"
+exit 0
