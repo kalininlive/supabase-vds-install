@@ -1,7 +1,7 @@
 #!/bin/bash
-cd /opt/supabase
+cd /opt/supabase-project || exit
 
 echo "Создание бэкапа..."
-docker exec supabase-db pg_dump -U postgres -d postgres > backup_$(date +%F_%H-%M).sql
+docker exec supabase-db pg_dump -U postgres -d postgres > "backup_$(date +%F_%H-%M).sql"
 
 echo "✅ Бэкап сохранён"

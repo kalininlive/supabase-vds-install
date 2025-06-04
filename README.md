@@ -66,7 +66,7 @@ bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-instal
 * 📦 Supabase (PostgreSQL, API, Studio, Auth, Storage и прочие сервисы)
 * 🔒 Basic Auth (защита по логину/паролю для Supabase Studio)
 * 🌐 HTTPS с автоматическим сертификатом от Let's Encrypt
-* 📂 Хранение данных в `/opt/supabase`
+* 📂 Хранение данных в `/opt/supabase-project`
 
 ---
 
@@ -96,7 +96,7 @@ bash <(curl -s https://raw.githubusercontent.com/kalininlive/supabase-vds-instal
 Можно добавить автоматический бэкап в `cron`:
 
 ```cron
-0 2 * * * /bin/bash /opt/supabase/backup.sh
+0 2 * * * /bin/bash /opt/supabase-project/backup.sh
 ```
 
 ---
