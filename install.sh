@@ -116,7 +116,6 @@ sed -i "s|^#\?SMTP_ADMIN_EMAIL=.*|SMTP_ADMIN_EMAIL=${EMAIL}|g" .env
 
 # 12) Маппинг портов Studio:3000
 cat <<EOF >/opt/supabase-project/docker-compose.override.yml
-version: "3.9"
 services:
   studio:
     ports:
