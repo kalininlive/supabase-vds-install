@@ -18,16 +18,16 @@ log "INFO" "🚀 Запуск установки Supabase..."
 rm -rf /opt/supabase /opt/supabase-project
 
 #
-# 1) Сбор данных
+# 1) Сбор пользовательских данных
 #
 read -p "Введите домен (например: supabase.example.com): " DOMAIN
-read -p "Введите email для SSL и уведомлений: " EMAIL
+read -p "Введите email для SSL сертификата и уведомлений: " EMAIL
 read -p "Введите логин для Supabase Studio: " DASHBOARD_USERNAME
-read -s -p "Введите пароль для Supabase Studio/nginx Basic Auth: " DASHBOARD_PASSWORD
+read -s -p "Введите пароль для Supabase Studio и nginx Basic Auth: " DASHBOARD_PASSWORD
 echo ""
 
 #
-# 2) Генерация секретов
+# 2) Генерация секретных ключей
 #
 log "INFO" "🔑 Генерация ключей..."
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -39,7 +39,7 @@ SITE_URL="https://$DOMAIN"
 #
 # 3) Установка системных пакетов
 #
-log "INFO" "📦 Установка зависимостей..."
+log "INFO" "📦 Обновление и установка базовых пакетов..."
 apt update
 apt install -y \
   ca-certificates curl gnupg lsb-release \
@@ -47,11 +47,27 @@ apt install -y \
   nginx apache2-utils certbot python3-certbot-nginx
 
 #
-# 4) Установка Docker и Compose-плагина
+# 4) Добавляем репозиторий Docker и устанавливаем Docker Engine + Compose-плагин
 #
-log "INFO" "🐳 Установка Docker и Compose-плагина..."
+log "INFO" "🐳 Установка Docker Engine и плагина Compose..."
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+ARCH="$(dpkg --print-architecture)"
+RELEASE="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+echo \
+  "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] \
+   https://download.docker.com/linux/ubuntu \
+   $RELEASE stable" \
+  | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
 apt update
-apt install -y docker.io docker-compose-plugin
+apt install -y \
+  docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+
 systemctl enable --now docker
 
 #
@@ -95,11 +111,11 @@ nginx -t && systemctl reload nginx
 #
 # 8) Настройка HTTPS
 #
-log "INFO" "🔒 Настройка HTTPS через Certbot..."
-certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n
+log "INFO" "🔒 Запрос тестового сертификата (staging)..."
+certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n --staging
 
 #
-# 9) Клонирование Supabase и sparse-checkout
+# 9) Клонирование Supabase и sparse-checkout docker
 #
 log "INFO" "⬇️ Клонирование репозитория Supabase..."
 git clone --depth=1 --filter=blob:none --sparse https://github.com/supabase/supabase.git /opt/supabase
