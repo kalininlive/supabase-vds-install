@@ -100,7 +100,7 @@ cd /opt/supabase-project
 
 # Запись .env
 log "INFO" "✍️ Запись .env..."
-cat <<EOF > .env
+cat <<EOF > /opt/supabase-project/.env
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 JWT_SECRET=$JWT_SECRET
 ANON_KEY=$ANON_KEY
@@ -111,4 +111,10 @@ STUDIO_USERNAME=$DASHBOARD_USERNAME
 SMTP_ADMIN_EMAIL=$EMAIL
 SMTP_HOST=
 SMTP_PORT=
-+EOF
+EOF
+
+# Запуск Supabase контейнеров
+log "INFO" "🐳 Запуск Supabase контейнеров..."
+cd /opt/supabase-project
+docker compose up -d
+log "INFO" "✅ Установка завершена! Supabase доступен по адресу $SITE_URL"
