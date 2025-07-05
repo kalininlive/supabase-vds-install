@@ -1,44 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Опрос ===
+# === ОПРОС ===
 read -p "Введите ваш IP или домен: " IP_DOMAIN
 read -p "Введите ваш email для SSL: " EMAIL
 read -p "Введите имя пользователя для входа: " DASH_USER
 read -p "Введите пароль для входа: " DASH_PASS
 
-if [ -z "$IP_DOMAIN" ]; then echo "IP/домен не указан — остановка."; exit 1; fi
+if [ -z "$IP_DOMAIN" ]; then echo "❌ IP или домен пустой!"; exit 1; fi
 
-# === Система ===
+# === ОБНОВЛЕНИЕ СИСТЕМЫ ===
 apt update && apt upgrade -y
 apt install -y curl git jq apache2-utils nginx certbot python3-certbot-nginx
 
+# === УСТАНОВКА DOCKER ===
 curl -fsSL https://get.docker.com | sh
 
+# === УСТАНОВКА SUPABASE CLI ===
 LATEST_TAG=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
 DEB_URL=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
 curl -L "$DEB_URL" -o supabase-cli.deb
 dpkg -i supabase-cli.deb
 
-# === Supabase ===
+# === УСТАНОВКА yq ===
+wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+chmod +x /usr/local/bin/yq
+
+# === ИНИЦИАЛИЗАЦИЯ SUPABASE ===
 mkdir -p ~/ws-supabase && cd ~/ws-supabase
 supabase init
 
+# === ГЕНЕРАЦИЯ СЕКРЕТОВ ===
 POSTGRES_PASS=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 20)
 ANON_KEY=$(openssl rand -hex 20)
 SERVICE_KEY=$(openssl rand -hex 20)
 
-# === Определить правильную папку ===
+# === ОПРЕДЕЛЯЕМ ПАПКУ ===
 if [ -d "supabase" ]; then
   ENV_DIR="supabase"
 elif [ -d ".supabase" ]; then
   ENV_DIR=".supabase"
 else
-  echo "Ошибка: папка Supabase не найдена!"
+  echo "❌ Папка Supabase не найдена!"
   exit 1
 fi
 
+# === env.example ===
 ENV_EXAMPLE_PATH="$ENV_DIR/env.example"
 
 if [ ! -f "$ENV_EXAMPLE_PATH" ]; then
@@ -68,12 +76,10 @@ DASHBOARD_USERNAME=$DASH_USER
 DASHBOARD_PASSWORD=$DASH_PASS
 EOF
 
-# === Пропатчить docker-compose.yml ===
-# Требуется yq
-apt install -y yq
+# === ПАТЧИМ docker-compose.yml ===
 yq eval ".services.gotrue.environment.JWT_SECRET = \"$JWT_SECRET\"" -i "$ENV_DIR/docker-compose.yml"
 
-# === Запустить ===
+# === СТАРТ SUPABASE ===
 cd "$ENV_DIR"
 supabase start
 
@@ -105,9 +111,10 @@ ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
 nginx -t
 systemctl restart nginx
 
+# === CERTBOT ===
 certbot --nginx -d $IP_DOMAIN --agree-tos -m $EMAIL --redirect --non-interactive
 
-# === Автообновление ===
+# === АВТООБНОВЛЕНИЕ ===
 cat <<UPDATE > ~/ws-supabase/update.sh
 #!/usr/bin/env bash
 set -euo pipefail
@@ -133,8 +140,8 @@ UPDATE
 chmod +x ~/ws-supabase/update.sh
 (crontab -l 2>/dev/null; echo \"0 3 * * * /bin/bash ~/ws-supabase/update.sh >> ~/ws-supabase/update.log 2>&1\") | crontab -
 
-# === Финал ===
-echo \"=== УСТАНОВКА ЗАВЕРШЕНА ===\"
+# === ИТОГ ===
+echo \"\\n✅ === УСТАНОВКА ЗАВЕРШЕНА ===\\n\"
 echo \"Docker version: $(docker --version)\"
 echo \"Compose version: $(docker compose version)\"
 echo \"Supabase CLI version: $(supabase --version)\"
