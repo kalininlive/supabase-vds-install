@@ -67,7 +67,7 @@ mkdir -p /opt/supabase /opt/supabase-project
 # Настройка Nginx и Basic Auth
 log "INFO" "\U0001F4BB Настройка nginx..."
 htpasswd -bc /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
-cat <<NGINXCONF >/etc/nginx/sites-available/supabase
+cat <<'NGINXCONF' >/etc/nginx/sites-available/supabase
 server {
     listen 80;
     server_name $DOMAIN;
