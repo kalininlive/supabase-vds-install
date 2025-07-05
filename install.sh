@@ -47,10 +47,10 @@ apt install -y \
   nginx apache2-utils certbot python3-certbot-nginx
 
 #
-# 4) Добавляем репозиторий Docker и устанавливаем Docker Engine + Compose-плагин
+# 4) Установка Docker Engine и плагина Compose из официального репозитория
 #
-log "INFO" "🐳 Установка Docker Engine и плагина Compose..."
-install -m 0755 -d /etc/apt/keyrings
+log "INFO" "🐳 Добавляем репозиторий Docker и устанавливаем Docker Engine + Compose-плагин..."
+install -m0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
   | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
@@ -68,6 +68,7 @@ apt install -y \
   docker-ce docker-ce-cli containerd.io \
   docker-buildx-plugin docker-compose-plugin
 
+# Запускаем и включаем сервис Docker
 systemctl enable --now docker
 
 #
@@ -109,7 +110,7 @@ ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
 nginx -t && systemctl reload nginx
 
 #
-# 8) Настройка HTTPS
+# 8) Настройка HTTPS (staging, чтобы не тратить квоту)
 #
 log "INFO" "🔒 Запрос тестового сертификата (staging)..."
 certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n --staging
