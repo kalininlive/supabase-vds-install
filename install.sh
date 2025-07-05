@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+if [[ $EUID -ne 0 ]]; then
+  echo "This script must be run as root" >&2
+  exit 1
+fi
+
 log() {
   echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"
 }
@@ -25,7 +30,10 @@ SITE_URL="https://$DOMAIN"
 
 # Установка Docker и зависимостей
 log "INFO" "\U0001F6E1 Установка зависимостей..."
-apt update && apt install -y ca-certificates curl gnupg lsb-release
+apt update && apt install -y \
+  ca-certificates curl gnupg lsb-release \
+  git jq htop net-tools ufw unzip \
+  nginx apache2-utils certbot python3-certbot-nginx
 
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -39,6 +47,14 @@ echo \
 
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+
+# Настройка файрвола
+log "INFO" "\U0001F6E1 Настройка UFW..."
+ufw allow OpenSSH
+ufw allow 80
+ufw allow 443
+ufw --force enable
 
 # Проверка docker compose
 log "INFO" "\U0001F6E1️ Проверка docker compose..."
@@ -47,6 +63,28 @@ docker compose version
 # Подготовка директорий
 log "INFO" "\U0001F4C1 Подготовка директорий..."
 mkdir -p /opt/supabase /opt/supabase-project
+
+# Настройка Nginx и Basic Auth
+log "INFO" "\U0001F4BB Настройка nginx..."
+htpasswd -bc /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
+cat <<NGINXCONF >/etc/nginx/sites-available/supabase
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        auth_basic "Restricted";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+    }
+}
+NGINXCONF
+ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
+nginx -t && systemctl reload nginx
+certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n
 
 # Клонирование Supabase (sparse clone)
 log "INFO" "⬇️ Клонирование репозитория Supabase..."
@@ -73,12 +111,3 @@ STUDIO_USERNAME=$DASHBOARD_USERNAME
 SMTP_ADMIN_EMAIL=$EMAIL
 SMTP_HOST=
 SMTP_PORT=
-SMTP_USERNAME=
-SMTP_PASSWORD=
-EOF
-
-# Запуск Supabase
-log "INFO" "\U0001F4E6 Загрузка docker-образов..."
-docker compose up -d
-
-log "INFO" "✅ Установка завершена! Перейдите по ссылке: https://$DOMAIN"
