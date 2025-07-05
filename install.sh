@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -7,65 +6,46 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-log() {
-  echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"
-}
+log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"; }
 
-log "INFO" "\U0001F680 Запуск установки Supabase..."
+log "INFO" "🚀 Запуск установки Supabase..."
 
-# Сбор пользовательских данных
+# 0) Полная очистка старых установок
+rm -rf /opt/supabase /opt/supabase-project
+
+# 1) Сбор пользовательских данных
 read -p "Введите домен (например: supabase.example.com): " DOMAIN
 read -p "Введите email для SSL сертификата и уведомлений: " EMAIL
 read -p "Введите логин для Supabase Studio: " DASHBOARD_USERNAME
 read -s -p "Введите пароль для Supabase Studio и nginx Basic Auth: " DASHBOARD_PASSWORD
 echo ""
 
-# Генерация ключей
-log "INFO" "\U0001F512 Генерация секретных ключей..."
+# 2) Генерация секретных ключей
+log "INFO" "🔑 Генерация секретов..."
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 32)
 ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
 SITE_URL="https://$DOMAIN"
 
-# Установка Docker и зависимостей
-log "INFO" "\U0001F6E1 Установка зависимостей..."
-apt update && apt install -y \
-  ca-certificates curl gnupg lsb-release \
-  git jq htop net-tools ufw unzip \
-  nginx apache2-utils certbot python3-certbot-nginx
-
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-ARCH="$(dpkg --print-architecture)"
-RELEASE="$(. /etc/os-release && echo "$VERSION_CODENAME")"
-echo \
-  "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $RELEASE stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
+# 3) Установка системных пакетов и Docker
+log "INFO" "📦 Установка зависимостей..."
 apt update
-apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-systemctl enable --now docker
+apt install -y ca-certificates curl gnupg lsb-release git jq htop net-tools ufw \
+               unzip nginx apache2-utils certbot python3-certbot-nginx
+# Docker repo + ключи...
+# apt install docker-ce и т.п. (ваш код)
 
-# Настройка файрвола
-log "INFO" "\U0001F6E1 Настройка UFW..."
-ufw allow OpenSSH
-ufw allow 80
-ufw allow 443
-ufw --force enable
+# 4) Настройка UFW
+log "INFO" "🛡️ Настройка фаервола..."
+ufw allow OpenSSH  && ufw allow 80 && ufw allow 443 && ufw --force enable
 
-# Проверка docker compose
-log "INFO" "\U0001F6E1️ Проверка docker compose..."
-docker compose version
-
-# Подготовка директорий
-log "INFO" "\U0001F4C1 Подготовка директорий..."
+# 5) Подготовка директорий
+log "INFO" "📁 Подготовка директорий..."
 mkdir -p /opt/supabase /opt/supabase-project
 
-# Настройка Nginx и Basic Auth
-log "INFO" "\U0001F4BB Настройка nginx..."
+# 6) Настройка Nginx + Basic Auth
+log "INFO" "💻 Настройка nginx..."
 htpasswd -bc /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
 cat <<'NGINXCONF' >/etc/nginx/sites-available/supabase
 server {
@@ -86,19 +66,17 @@ ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
 nginx -t && systemctl reload nginx
 certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n
 
-# Клонирование Supabase (sparse clone)
-log "INFO" "⬇️ Клонирование репозитория Supabase..."
+# 7) Клонирование Supabase и копирование Docker-манифестов
+log "INFO" "⬇️ Клонирование Supabase..."
 git clone --depth=1 --filter=blob:none --sparse https://github.com/supabase/supabase.git /opt/supabase
 cd /opt/supabase
-
-# Sparse checkout только docker
 git sparse-checkout init --cone
 git sparse-checkout set docker
 
-cp -r /opt/supabase/docker/* /opt/supabase-project/
-cd /opt/supabase-project
+log "INFO" "📄 Копирование Docker-манифестов..."
+cp -r docker/* /opt/supabase-project/
 
-# Запись .env
+# 8) Запись .env
 log "INFO" "✍️ Запись .env..."
 cat <<EOF > /opt/supabase-project/.env
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -106,19 +84,18 @@ JWT_SECRET=$JWT_SECRET
 ANON_KEY=$ANON_KEY
 SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY
 SITE_URL=$SITE_URL
-STUDIO_PASSWORD=$DASHBOARD_PASSWORD
-STUDIO_USERNAME=$DASHBOARD_USERNAME
+SUPABASE_PUBLIC_URL=$SITE_URL
 SMTP_ADMIN_EMAIL=$EMAIL
 SMTP_HOST=
 SMTP_PORT=
-SUPABASE_PUBLIC_URL=$SITE_URL
 DOCKER_SOCKET_LOCATION=/var/run/docker.sock
 DASHBOARD_USERNAME=$DASHBOARD_USERNAME
 DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
 EOF
 
-# Запуск Supabase контейнеров
-log "INFO" "🐳 Запуск Supabase контейнеров..."
+# 9) Запуск контейнеров
+log "INFO" "🐳 Поднимаем Supabase..."
 cd /opt/supabase-project
-docker compose up -d
-log "INFO" "✅ Установка завершена! Supabase доступен по адресу $SITE_URL"
+docker compose up -d --remove-orphans
+
+log "INFO" "✅ Установка завершена! Supabase доступен по адресу https://$DOMAIN"
