@@ -1,131 +1,118 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"; }
-if [[ $EUID -ne 0 ]]; then log "ERROR" "Запустите от root"; exit 1; fi
+# === 1. Опрос пользователя ===
+read -p "Введите ваш IP или домен: " IP_DOMAIN
+read -p "Введите ваш email для SSL: " EMAIL
+read -p "Введите имя пользователя для входа: " DASH_USER
+read -p "Введите пароль для входа: " DASH_PASS
 
-log "INFO" "🚀 Старт установки Supabase..."
+# === 2. Обновление системы и установка зависимостей ===
+apt update && apt upgrade -y
+apt install -y curl git jq apache2-utils nginx certbot python3-certbot-nginx
 
-# 0) Чистим старые установки
-rm -rf /opt/supabase /opt/supabase-project
+# === 3. Установка Docker и Supabase CLI ===
+curl -fsSL https://get.docker.com | sh
+LATEST_TAG=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
+DEB_URL=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
+curl -L "$DEB_URL" -o supabase-cli.deb
+dpkg -i supabase-cli.deb
 
-# 1) Сбор данных
-read -p "Домен (например: supabase.example.com): " DOMAIN
-read -p "Email для SSL и уведомлений: " EMAIL
-read -p "Логин для Supabase Studio: " DASHBOARD_USERNAME
-read -s -p "Пароль для Studio и nginx Basic Auth: " DASHBOARD_PASSWORD
-echo ""
-SITE_URL="https://${DOMAIN}"
+# === 4. Инициализация Supabase ===
+mkdir -p ~/ws-supabase && cd ~/ws-supabase
+supabase init
 
-# 2) Генерация секретов
-log "INFO" "🔑 Генерируем секреты..."
-POSTGRES_PASSWORD=$(openssl rand -hex 16)
-ANON_KEY=$(openssl rand -hex 32)
-SERVICE_ROLE_KEY=$(openssl rand -hex 32)
-JWT_SECRET=$(openssl rand -hex 32)
-# Новые токены для Logflare — пустые строки сломают TOML, так что генерируем рандом
-LOGFLARE_PUBLIC_ACCESS_TOKEN=$(openssl rand -hex 32)
-LOGFLARE_PRIVATE_ACCESS_TOKEN=$(openssl rand -hex 32)
+# === 5. Генерация секретов ===
+POSTGRES_PASS=$(openssl rand -hex 16)
+JWT_SECRET=$(openssl rand -hex 20)
+ANON_KEY=$(openssl rand -hex 20)
+SERVICE_KEY=$(openssl rand -hex 20)
 
-# 3) Установка базовых пакетов
-log "INFO" "📦 Устанавливаем пакеты..."
-apt update
-apt install -y ca-certificates curl gnupg lsb-release \
-  git jq htop net-tools ufw unzip \
-  nginx apache2-utils certbot python3-certbot-nginx openssl
-
-# 4) Установка Docker & Compose
-log "INFO" "🐳 Добавляем репозиторий Docker и устанавливаем..."
-install -m0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-ARCH=$(dpkg --print-architecture)
-RELEASE=$(. /etc/os-release && echo "$VERSION_CODENAME")
-echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/ubuntu ${RELEASE} stable" \
-  | tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt update
-apt install -y docker-ce docker-ce-cli containerd.io \
-               docker-buildx-plugin docker-compose-plugin
-systemctl enable --now docker
-
-# 5) UFW
-log "INFO" "🛡️ Настраиваем файрвол..."
-ufw allow OpenSSH; ufw allow 80; ufw allow 443; ufw --force enable
-
-# 6) Директории
-log "INFO" "📁 Подготовка каталогов..."
-mkdir -p /opt/supabase /opt/supabase-project
-
-# 7) Nginx + Basic Auth, прокси на Studio:3000
-log "INFO" "💻 Конфигурируем Nginx..."
-htpasswd -bc /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
-cat <<'NGINX' >/etc/nginx/sites-available/supabase
-server {
-  listen 80;
-  server_name DOMAIN_PLACEHOLDER;
-
-  location / {
-    auth_basic           "Restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd;
-
-    proxy_pass           http://localhost:3000;
-    proxy_set_header     Host $host;
-    proxy_set_header     X-Real-IP $remote_addr;
-    proxy_set_header     X-Forwarded-For $proxy_add_x_forwarded_for;
-  }
-}
-NGINX
-sed -i "s|DOMAIN_PLACEHOLDER|${DOMAIN}|g" /etc/nginx/sites-available/supabase
-ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
-nginx -t && systemctl reload nginx
-
-# 8) SSL (staging)
-log "INFO" "🔒 Запрашиваем тестовый сертификат (staging)..."
-certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n
-
-# 9) Клонируем Supabase и sparse-checkout docker
-log "INFO" "⬇️ Клонируем Supabase..."
-git clone --depth 1 --filter=blob:none --sparse \
-  https://github.com/supabase/supabase.git /opt/supabase
-cd /opt/supabase
-git sparse-checkout init --cone
-git sparse-checkout set docker
-
-# 10) Копируем Docker-манифесты
-log "INFO" "📄 Копируем Docker-манифесты..."
-cp -r docker/* /opt/supabase-project/
-
-# 11) Генерация .env из шаблона
-log "INFO" "✍️ Создаём .env из .env.example..."
-cd /opt/supabase-project
-cp ../supabase/docker/.env.example .env
-# Подставляем ключевые
-sed -i "s|^#\?POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|g" .env
-sed -i "s|^#\?ANON_KEY=.*|ANON_KEY=${ANON_KEY}|g" .env
-sed -i "s|^#\?SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}|g" .env
-sed -i "s|^#\?JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|g" .env
-sed -i "s|^#\?SITE_URL=.*|SITE_URL=${SITE_URL}|g" .env
-sed -i "s|^#\?SUPABASE_PUBLIC_URL=.*|SUPABASE_PUBLIC_URL=${SITE_URL}|g" .env
-sed -i "s|^#\?LOGFLARE_PUBLIC_ACCESS_TOKEN=.*|LOGFLARE_PUBLIC_ACCESS_TOKEN=\"${LOGFLARE_PUBLIC_ACCESS_TOKEN}\"|g" .env
-sed -i "s|^#\?LOGFLARE_PRIVATE_ACCESS_TOKEN=.*|LOGFLARE_PRIVATE_ACCESS_TOKEN=\"${LOGFLARE_PRIVATE_ACCESS_TOKEN}\"|g" .env
-sed -i "s|^#\?DASHBOARD_USERNAME=.*|DASHBOARD_USERNAME=${DASHBOARD_USERNAME}|g" .env
-sed -i "s|^#\?DASHBOARD_PASSWORD=.*|DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}|g" .env
-sed -i "s|^#\?SMTP_ADMIN_EMAIL=.*|SMTP_ADMIN_EMAIL=${EMAIL}|g" .env
-
-# 12) Маппинг портов Studio:3000
-cat <<EOF >/opt/supabase-project/docker-compose.override.yml
-services:
-  studio:
-    ports:
-      - "3000:3000"
+# === 6. Создание .env ===
+cp supabase/.env.example supabase/.env
+cat <<EOF >> supabase/.env
+POSTGRES_PASSWORD=$POSTGRES_PASS
+JWT_SECRET=$JWT_SECRET
+ANON_KEY=$ANON_KEY
+SERVICE_ROLE_KEY=$SERVICE_KEY
+SITE_URL=https://$IP_DOMAIN
+SUPABASE_PUBLIC_URL=https://$IP_DOMAIN
+DASHBOARD_USERNAME=$DASH_USER
+DASHBOARD_PASSWORD=$DASH_PASS
 EOF
 
-# 13) Запуск контейнеров
-log "INFO" "🐳 Поднимаем Supabase stack..."
-cd /opt/supabase-project
-docker compose pull
-docker compose up -d --remove-orphans
+# === 7. Запуск Supabase ===
+cd supabase
+supabase start
 
-log "INFO" "✅ Готово! Откройте ${SITE_URL}"
+# === 8. Настройка NGINX и Basic Auth ===
+htpasswd -bc /etc/nginx/.htpasswd $DASH_USER $DASH_PASS
+cat <<EOL > /etc/nginx/sites-available/supabase
+server {
+    listen 80;
+    server_name $IP_DOMAIN;
+
+    location / {
+        proxy_pass http://localhost:54323;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        auth_basic "Restricted Area";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+    }
+}
+EOL
+
+ln -s /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/
+systemctl restart nginx
+
+# === 9. SSL Certbot ===
+certbot --nginx -d $IP_DOMAIN --agree-tos -m $EMAIL --redirect --non-interactive
+
+# === 10. Создание скрипта автообновления ===
+cat <<UPDATE > ~/ws-supabase/update.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP_DIR=~/ws-supabase/backups
+mkdir -p \$BACKUP_DIR
+rm -rf \$BACKUP_DIR/*
+ZIP_NAME="backup-\$(date +%F-%H%M).zip"
+zip -r \$BACKUP_DIR/\$ZIP_NAME ~/ws-supabase/supabase ~/ws-supabase/supabase/.env
+
+apt update && apt upgrade -y
+LATEST_TAG=\$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
+DEB_URL=\$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
+curl -L \"\$DEB_URL\" -o supabase-cli.deb
+dpkg -i supabase-cli.deb
+
+cd ~/ws-supabase/supabase
+docker compose pull
+docker compose up -d
+docker system prune -af
+UPDATE
+
+chmod +x ~/ws-supabase/update.sh
+(crontab -l 2>/dev/null; echo "0 3 * * * /bin/bash ~/ws-supabase/update.sh >> ~/ws-supabase/update.log 2>&1") | crontab -
+
+# === 11. Итоговый вывод ===
+echo "=== УСТАНОВКА ЗАВЕРШЕНА ==="
+echo "Docker version: $(docker --version)"
+echo "Compose version: $(docker compose version)"
+echo "Supabase CLI version: $(supabase --version)"
+echo
+
+echo "🌐 Dashboard: https://$IP_DOMAIN"
+echo "👤 Username: $DASH_USER"
+echo "🔑 Password: $DASH_PASS"
+echo
+
+echo "🔐 Postgres password: $POSTGRES_PASS"
+echo "🔐 JWT_SECRET: $JWT_SECRET"
+echo "🔐 ANON_KEY: $ANON_KEY"
+echo "🔐 SERVICE_ROLE_KEY: $SERVICE_KEY"
+echo
+
+echo "📦 Бэкап хранится в: ~/ws-supabase/backups"
