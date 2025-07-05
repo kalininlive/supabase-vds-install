@@ -6,21 +6,29 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"; }
+log() {
+  echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$1] $2"
+}
 
 log "INFO" "🚀 Запуск установки Supabase..."
 
+#
 # 0) Полная очистка старых установок
+#
 rm -rf /opt/supabase /opt/supabase-project
 
+#
 # 1) Сбор пользовательских данных
+#
 read -p "Введите домен (например: supabase.example.com): " DOMAIN
 read -p "Введите email для SSL сертификата и уведомлений: " EMAIL
 read -p "Введите логин для Supabase Studio: " DASHBOARD_USERNAME
 read -s -p "Введите пароль для Supabase Studio и nginx Basic Auth: " DASHBOARD_PASSWORD
 echo ""
 
+#
 # 2) Генерация секретных ключей
+#
 log "INFO" "🔑 Генерация секретов..."
 POSTGRES_PASSWORD=$(openssl rand -hex 16)
 JWT_SECRET=$(openssl rand -hex 32)
@@ -28,23 +36,51 @@ ANON_KEY=$(openssl rand -hex 32)
 SERVICE_ROLE_KEY=$(openssl rand -hex 32)
 SITE_URL="https://$DOMAIN"
 
+#
 # 3) Установка системных пакетов и Docker
+#
 log "INFO" "📦 Установка зависимостей..."
 apt update
-apt install -y ca-certificates curl gnupg lsb-release git jq htop net-tools ufw \
-               unzip nginx apache2-utils certbot python3-certbot-nginx
-# Docker repo + ключи...
-# apt install docker-ce и т.п. (ваш код)
+apt install -y \
+  ca-certificates curl gnupg lsb-release \
+  git jq htop net-tools ufw unzip \
+  nginx apache2-utils certbot python3-certbot-nginx
 
-# 4) Настройка UFW
+log "INFO" "🐳 Установка Docker..."
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+ARCH="$(dpkg --print-architecture)"
+RELEASE="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+echo \
+  "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $RELEASE stable" \
+  | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt update
+apt install -y \
+  docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+
+#
+# 4) Настройка файрвола
+#
 log "INFO" "🛡️ Настройка фаервола..."
-ufw allow OpenSSH  && ufw allow 80 && ufw allow 443 && ufw --force enable
+ufw allow OpenSSH
+ufw allow 80
+ufw allow 443
+ufw --force enable
 
+#
 # 5) Подготовка директорий
+#
 log "INFO" "📁 Подготовка директорий..."
 mkdir -p /opt/supabase /opt/supabase-project
 
-# 6) Настройка Nginx + Basic Auth
+#
+# 6) Настройка nginx + Basic Auth
+#
 log "INFO" "💻 Настройка nginx..."
 htpasswd -bc /etc/nginx/.htpasswd "$DASHBOARD_USERNAME" "$DASHBOARD_PASSWORD"
 cat <<'NGINXCONF' >/etc/nginx/sites-available/supabase
@@ -64,19 +100,31 @@ server {
 NGINXCONF
 ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
 nginx -t && systemctl reload nginx
+
+#
+# 7) Настройка HTTPS
+#
+log "INFO" "🔒 Настройка HTTPS через Certbot..."
 certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n
 
-# 7) Клонирование Supabase и копирование Docker-манифестов
-log "INFO" "⬇️ Клонирование Supabase..."
+#
+# 8) Клонирование Supabase и sparse-checkout docker
+#
+log "INFO" "⬇️ Клонирование репозитория Supabase..."
 git clone --depth=1 --filter=blob:none --sparse https://github.com/supabase/supabase.git /opt/supabase
 cd /opt/supabase
 git sparse-checkout init --cone
 git sparse-checkout set docker
 
+#
+# 9) Копирование Docker-манифестов
+#
 log "INFO" "📄 Копирование Docker-манифестов..."
 cp -r docker/* /opt/supabase-project/
 
-# 8) Запись .env
+#
+# 10) Запись .env
+#
 log "INFO" "✍️ Запись .env..."
 cat <<EOF > /opt/supabase-project/.env
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -93,9 +141,11 @@ DASHBOARD_USERNAME=$DASHBOARD_USERNAME
 DASHBOARD_PASSWORD=$DASHBOARD_PASSWORD
 EOF
 
-# 9) Запуск контейнеров
-log "INFO" "🐳 Поднимаем Supabase..."
+#
+# 11) Запуск Supabase
+#
+log "INFO" "🐳 Запуск Supabase контейнеров..."
 cd /opt/supabase-project
 docker compose up -d --remove-orphans
 
-log "INFO" "✅ Установка завершена! Supabase доступен по адресу https://$DOMAIN"
+log "INFO" "✅ Установка завершена! Supabase доступен по адресу $SITE_URL"
