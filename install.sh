@@ -7,16 +7,20 @@ read -p "Введите ваш email для SSL: " EMAIL
 read -p "Введите имя пользователя для входа: " DASH_USER
 read -p "Введите пароль для входа: " DASH_PASS
 
+if [ -z "$IP_DOMAIN" ]; then echo "IP/домен не указан — остановка."; exit 1; fi
+
 # === Система ===
 apt update && apt upgrade -y
 apt install -y curl git jq apache2-utils nginx certbot python3-certbot-nginx
 
 curl -fsSL https://get.docker.com | sh
+
 LATEST_TAG=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
 DEB_URL=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
 curl -L "$DEB_URL" -o supabase-cli.deb
 dpkg -i supabase-cli.deb
 
+# === Supabase ===
 mkdir -p ~/ws-supabase && cd ~/ws-supabase
 supabase init
 
@@ -25,7 +29,7 @@ JWT_SECRET=$(openssl rand -hex 20)
 ANON_KEY=$(openssl rand -hex 20)
 SERVICE_KEY=$(openssl rand -hex 20)
 
-# === Определяем правильную папку ===
+# === Определить правильную папку ===
 if [ -d "supabase" ]; then
   ENV_DIR="supabase"
 elif [ -d ".supabase" ]; then
@@ -38,7 +42,7 @@ fi
 ENV_EXAMPLE_PATH="$ENV_DIR/env.example"
 
 if [ ! -f "$ENV_EXAMPLE_PATH" ]; then
-  echo "Создаю env.example с шаблоном..."
+  echo "Создаю env.example..."
   cat <<EOF > "$ENV_EXAMPLE_PATH"
 POSTGRES_PASSWORD=
 JWT_SECRET=
@@ -64,8 +68,17 @@ DASHBOARD_USERNAME=$DASH_USER
 DASHBOARD_PASSWORD=$DASH_PASS
 EOF
 
+# === Пропатчить docker-compose.yml ===
+# Требуется yq
+apt install -y yq
+yq eval ".services.gotrue.environment.JWT_SECRET = \"$JWT_SECRET\"" -i "$ENV_DIR/docker-compose.yml"
+
+# === Запустить ===
 cd "$ENV_DIR"
 supabase start
+
+# === NGINX ===
+mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
 
 htpasswd -bc /etc/nginx/.htpasswd $DASH_USER $DASH_PASS
 
@@ -76,10 +89,10 @@ server {
 
     location / {
         proxy_pass http://localhost:54323;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
 
         auth_basic "Restricted Area";
         auth_basic_user_file /etc/nginx/.htpasswd;
@@ -87,51 +100,52 @@ server {
 }
 EOL
 
-ln -s /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/supabase /etc/nginx/sites-enabled/supabase
+
+nginx -t
 systemctl restart nginx
 
 certbot --nginx -d $IP_DOMAIN --agree-tos -m $EMAIL --redirect --non-interactive
 
+# === Автообновление ===
 cat <<UPDATE > ~/ws-supabase/update.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 BACKUP_DIR=~/ws-supabase/backups
-mkdir -p $BACKUP_DIR
-rm -rf $BACKUP_DIR/*
-ZIP_NAME="backup-$(date +%F-%H%M).zip"
-zip -r $BACKUP_DIR/$ZIP_NAME ~/ws-supabase/$ENV_DIR ~/ws-supabase/$ENV_DIR/.env
+mkdir -p \$BACKUP_DIR
+rm -rf \$BACKUP_DIR/*
+ZIP_NAME="backup-\$(date +%F-%H%M).zip"
+zip -r \$BACKUP_DIR/\$ZIP_NAME ~/ws-supabase/\$ENV_DIR ~/ws-supabase/\$ENV_DIR/.env
 
 apt update && apt upgrade -y
-LATEST_TAG=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
-DEB_URL=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
-curl -L "$DEB_URL" -o supabase-cli.deb
+LATEST_TAG=\$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
+DEB_URL=\$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
+curl -L "\$DEB_URL" -o supabase-cli.deb
 dpkg -i supabase-cli.deb
 
-cd ~/ws-supabase/$ENV_DIR
+cd ~/ws-supabase/\$ENV_DIR
 docker compose pull
 docker compose up -d
 docker system prune -af
 UPDATE
 
 chmod +x ~/ws-supabase/update.sh
-(crontab -l 2>/dev/null; echo "0 3 * * * /bin/bash ~/ws-supabase/update.sh >> ~/ws-supabase/update.log 2>&1") | crontab -
+(crontab -l 2>/dev/null; echo \"0 3 * * * /bin/bash ~/ws-supabase/update.sh >> ~/ws-supabase/update.log 2>&1\") | crontab -
 
-echo "=== УСТАНОВКА ЗАВЕРШЕНА ==="
-echo "Docker version: $(docker --version)"
-echo "Compose version: $(docker compose version)"
-echo "Supabase CLI version: $(supabase --version)"
+# === Финал ===
+echo \"=== УСТАНОВКА ЗАВЕРШЕНА ===\"
+echo \"Docker version: $(docker --version)\"
+echo \"Compose version: $(docker compose version)\"
+echo \"Supabase CLI version: $(supabase --version)\"
 echo
-
-echo "🌐 Dashboard: https://$IP_DOMAIN"
-echo "👤 Username: $DASH_USER"
-echo "🔑 Password: $DASH_PASS"
+echo \"🌐 Dashboard: https://$IP_DOMAIN\"
+echo \"👤 Username: $DASH_USER\"
+echo \"🔑 Password: $DASH_PASS\"
 echo
-
-echo "🔐 Postgres password: $POSTGRES_PASS"
-echo "🔐 JWT_SECRET: $JWT_SECRET"
-echo "🔐 ANON_KEY: $ANON_KEY"
-echo "🔐 SERVICE_ROLE_KEY: $SERVICE_KEY"
+echo \"🔐 Postgres password: $POSTGRES_PASS\"
+echo \"🔐 JWT_SECRET: $JWT_SECRET\"
+echo \"🔐 ANON_KEY: $ANON_KEY\"
+echo \"🔐 SERVICE_ROLE_KEY: $SERVICE_KEY\"
 echo
-
-echo "📦 Бэкап хранится в: ~/ws-supabase/backups"
+echo \"📦 Бэкап хранится в: ~/ws-supabase/backups\"
