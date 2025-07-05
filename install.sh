@@ -83,7 +83,7 @@ nginx -t && systemctl reload nginx
 
 # 8) SSL (staging)
 log "INFO" "🔒 Запрашиваем тестовый сертификат (staging)..."
-certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n --staging
+certbot --nginx -d "$DOMAIN" -m "$EMAIL" --agree-tos -n
 
 # 9) Клонируем Supabase и sparse-checkout docker
 log "INFO" "⬇️ Клонируем Supabase..."
