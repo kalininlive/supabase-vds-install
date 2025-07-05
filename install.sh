@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Фикс пути шаблона ===
+# === Опрос ===
 read -p "Введите ваш IP или домен: " IP_DOMAIN
 read -p "Введите ваш email для SSL: " EMAIL
 read -p "Введите имя пользователя для входа: " DASH_USER
 read -p "Введите пароль для входа: " DASH_PASS
 
+# === Система ===
 apt update && apt upgrade -y
 apt install -y curl git jq apache2-utils nginx certbot python3-certbot-nginx
 
@@ -24,15 +25,35 @@ JWT_SECRET=$(openssl rand -hex 20)
 ANON_KEY=$(openssl rand -hex 20)
 SERVICE_KEY=$(openssl rand -hex 20)
 
-# === Добавляем проверку файла env.example ===
-ENV_EXAMPLE_PATH=".supabase/env.example"
-if [ ! -f "$ENV_EXAMPLE_PATH" ]; then
-  echo "Шаблон .env.example не найден. Создаю пустой..."
-  touch "$ENV_EXAMPLE_PATH"
+# === Определяем правильную папку ===
+if [ -d "supabase" ]; then
+  ENV_DIR="supabase"
+elif [ -d ".supabase" ]; then
+  ENV_DIR=".supabase"
+else
+  echo "Ошибка: папка Supabase не найдена!"
+  exit 1
 fi
 
-cp "$ENV_EXAMPLE_PATH" .supabase/.env
-cat <<EOF >> .supabase/.env
+ENV_EXAMPLE_PATH="$ENV_DIR/env.example"
+
+if [ ! -f "$ENV_EXAMPLE_PATH" ]; then
+  echo "Создаю env.example с шаблоном..."
+  cat <<EOF > "$ENV_EXAMPLE_PATH"
+POSTGRES_PASSWORD=
+JWT_SECRET=
+ANON_KEY=
+SERVICE_ROLE_KEY=
+SITE_URL=
+SUPABASE_PUBLIC_URL=
+DASHBOARD_USERNAME=
+DASHBOARD_PASSWORD=
+EOF
+fi
+
+cp "$ENV_EXAMPLE_PATH" "$ENV_DIR/.env"
+
+cat <<EOF >> "$ENV_DIR/.env"
 POSTGRES_PASSWORD=$POSTGRES_PASS
 JWT_SECRET=$JWT_SECRET
 ANON_KEY=$ANON_KEY
@@ -43,10 +64,11 @@ DASHBOARD_USERNAME=$DASH_USER
 DASHBOARD_PASSWORD=$DASH_PASS
 EOF
 
-cd .supabase
+cd "$ENV_DIR"
 supabase start
 
 htpasswd -bc /etc/nginx/.htpasswd $DASH_USER $DASH_PASS
+
 cat <<EOL > /etc/nginx/sites-available/supabase
 server {
     listen 80;
@@ -75,18 +97,18 @@ cat <<UPDATE > ~/ws-supabase/update.sh
 set -euo pipefail
 
 BACKUP_DIR=~/ws-supabase/backups
-mkdir -p \$BACKUP_DIR
-rm -rf \$BACKUP_DIR/*
-ZIP_NAME="backup-\$(date +%F-%H%M).zip"
-zip -r \$BACKUP_DIR/\$ZIP_NAME ~/ws-supabase/.supabase ~/ws-supabase/.supabase/.env
+mkdir -p $BACKUP_DIR
+rm -rf $BACKUP_DIR/*
+ZIP_NAME="backup-$(date +%F-%H%M).zip"
+zip -r $BACKUP_DIR/$ZIP_NAME ~/ws-supabase/$ENV_DIR ~/ws-supabase/$ENV_DIR/.env
 
 apt update && apt upgrade -y
-LATEST_TAG=\$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
-DEB_URL=\$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
-curl -L \"\$DEB_URL\" -o supabase-cli.deb
+LATEST_TAG=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.tag_name')
+DEB_URL=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | jq -r '.assets[] | select(.browser_download_url | endswith("_linux_amd64.deb")) | .browser_download_url')
+curl -L "$DEB_URL" -o supabase-cli.deb
 dpkg -i supabase-cli.deb
 
-cd ~/ws-supabase/.supabase
+cd ~/ws-supabase/$ENV_DIR
 docker compose pull
 docker compose up -d
 docker system prune -af
